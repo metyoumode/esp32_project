@@ -1,0 +1,21 @@
+# ESP-IDF build output
+/build/
+
+# Generated ESP-IDF configuration
+/sdkconfig
+/sdkconfig.old
+
+# Generated binaries and debug files
+*.bin
+*.elf
+*.map
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local VS Code settings
+.vscode/
+
+# ESP-IDF Component Manager generated directory
+managed_components/
