@@ -1,10 +1,3 @@
-/*
- * spi_main.c
- *
- *  Created on: Sep 10, 2026
- *      Author: rehab
- */
-
 #include "spi_ads1298.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
@@ -28,6 +21,8 @@ static const char TAG[] = "main";
 /* external clock to ADS1298 CLK */
 #define PIN_NUM_ADS_CLK    GPIO_NUM_3
 #define ADS_CLK_FREQ_HZ    2048000
+#define ADS1298_FRAME_BYTES_SINGLE 27U
+#define ADS1298_NUM_CHANNELS       8U
 
 static void parse_ads1298_device_frame(const uint8_t *frame,
 									   int32_t channels[ADS1298_CHANNELS],
@@ -75,6 +70,43 @@ static esp_err_t ads1298_clock_init(void)
     return ledc_update_duty(LEDC_LOW_SPEED_MODE,
                             LEDC_CHANNEL_0);
 }
+
+
+static void ads1298_print_dual_channels(
+    const int32_t ads1[ADS1298_CHANNELS],
+    const int32_t ads2[ADS1298_CHANNELS])
+{
+    ESP_LOGI(TAG,
+             "ADS1: "
+             "CH1=%ld CH2=%ld CH3=%ld CH4=%ld "
+             "CH5=%ld CH6=%ld CH7=%ld CH8=%ld",
+             (long)ads1[0], (long)ads1[1],
+             (long)ads1[2], (long)ads1[3],
+             (long)ads1[4], (long)ads1[5],
+             (long)ads1[6], (long)ads1[7]);
+
+    ESP_LOGI(TAG,
+             "ADS2: "
+             "CH1=%ld CH2=%ld CH3=%ld CH4=%ld "
+             "CH5=%ld CH6=%ld CH7=%ld CH8=%ld",
+             (long)ads2[0], (long)ads2[1],
+             (long)ads2[2], (long)ads2[3],
+             (long)ads2[4], (long)ads2[5],
+             (long)ads2[6], (long)ads2[7]);
+}
+
+static void config_inputs_for_all(ads1298_handle_t ads_handle,
+                                  uint8_t ch_set)
+{
+    for (uint8_t ch = 0; ch < ADS1298_NUM_CHANNELS; ch++) {
+        ESP_ERROR_CHECK(ads1298_write_reg(
+            ads_handle,
+            ADS1298_REG_CH1SET + ch,
+            ch_set));
+    }
+}
+
+
 
 void app_main(void) {
 	esp_err_t ret;
@@ -139,12 +171,12 @@ void app_main(void) {
     // No electrodes feeds the DRL
 	ESP_ERROR_CHECK(ads1298_write_reg(ads_handle, ADS1298_REG_RLD_SENSP, 0x00));
 	vTaskDelay(pdMS_TO_TICKS(10));
-
-	/* Example common configuration broadcast to both ADS1298 devices. */
-	// ESP_ERROR_CHECK(ads1298_write_reg(ads_handle, ADS1298_REG_CONFIG2, ...));
-	// ESP_ERROR_CHECK(ads1298_write_reg(ads_handle, ADS1298_REG_CONFIG3, ...));
-	// ESP_ERROR_CHECK(ads1298_write_reg(ads_handle, ADS1298_REG_CH1SET, ...));
-	// Repeat for CH2SET through CH8SET as required.
+     
+	/* Example: enable all channels, gain 6, normal electrode input. */
+	//qui il codice del stm32 ha uno switch che ti permette ti cambiare il gain
+	//li viene fatto con i gain: 2,4,6,8,12 ma di default c'è gain=8
+	
+    config_inputs_for_all(ads_handle, 0x50); //0x50 setta gain=8
 
 	/* Start continuous data output and conversions. */
   	ESP_ERROR_CHECK(ads1298_send_command(ads_handle, ADS1298_CMD_START));
@@ -179,17 +211,12 @@ void app_main(void) {
             continue;
 		}
 
-		ESP_LOG_BUFFER_HEX_LEVEL(TAG, frame, sizeof(frame),
-								 ESP_LOG_INFO);
-
 		/* Assumption: first 27-byte block is ADS1, second is ADS2. */
-		parse_ads1298_device_frame(&frame[0], ads1_channels,
-								   ads1_status); // ads1
-		parse_ads1298_device_frame(&frame[ADS1298_FRAME_BYTES_SINGLE],
-								   ads2_channels, ads2_status); // ads2
+		parse_ads1298_device_frame(&frame[0], ads1_channels,ads1_status); // ads1
 
-		ESP_LOGD(TAG, "ADS1 CH1=%ld, ADS2 CH1=%ld", (long)ads1_channels[0],
-				 (long)ads2_channels[0]);
+		parse_ads1298_device_frame(&frame[ADS1298_FRAME_BYTES_SINGLE],ads2_channels, ads2_status); // ads2
+
+		ads1298_print_dual_channels(ads1_channels, ads2_channels);
 
 		/* Process or queue the 16 decoded channels here. */
 		// TODO: parse frame (status + 24-bit channels)
