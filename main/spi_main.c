@@ -87,7 +87,7 @@ void app_main(void) {
 		.sclk_io_num = PIN_NUM_SCLK,
 		.quadwp_io_num = -1,
 		.quadhd_io_num = -1,
-		.max_transfer_sz = ADS1298_FRAME_BYTES_DAISY,
+		.max_transfer_sz = ADS1298_RAW_BYTES_DAISY,
 	};
 
 	ret = spi_bus_initialize(ADS_HOST, &buscfg, SPI_DMA_CH_AUTO);
@@ -106,7 +106,7 @@ void app_main(void) {
 	ads1298_config_t ads_cfg = {
 		.host = ADS_HOST,
 		.cs_io = PIN_NUM_CS,
-		.drdy_io = PIN_NUM_DRDY,
+		.drdy_io = PIN_NUM_DRDY, 
 		.reset_io = PIN_NUM_RESET,
 		.start_io = PIN_NUM_START,
 		.spi_clock_hz = 2 * 1000 * 1000, // 2 MHz
@@ -162,12 +162,14 @@ void app_main(void) {
 
 	while (1) {
 		// Wait for new data
-		ret = ads1298_wait_drdy(ads_handle, ADS1298_DRDY_TIMEOUT_MS);
-		if (ret != ESP_OK) {
-			ESP_LOGW(TAG, "DRDY timeout: %s", esp_err_to_name(ret));
-			vTaskDelay(10);
-			continue;
-		}
+		ret = ads1298_wait_drdy(ads_handle,
+                        ADS1298_DRDY_TIMEOUT_MS);
+
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG,"DRDY timeout: %s; GPIO%d level=%d",esp_err_to_name(ret),(int)PIN_NUM_DRDY,gpio_get_level(PIN_NUM_DRDY));
+
+    continue;
+}
 
 		// Read one sample set
 		ret = ads1298_read_data(ads_handle, frame, sizeof(frame));

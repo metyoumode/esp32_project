@@ -332,38 +332,42 @@ esp_err_t ads1298_read_data(ads1298_handle_t handle,
      * 216 data bits + 1 inter-device bit + 216 data bits.
      */
     uint8_t raw[ADS1298_RAW_BYTES_DAISY] = {0};
-    uint8_t dummy[ADS1298_RAW_BYTES_DAISY] = {0};
+uint8_t dummy[ADS1298_RAW_BYTES_DAISY] = {0};
 
-    spi_transaction_t t = {
-        .length = ADS1298_RAW_BITS_DAISY*8U,
-        .rxlength = ADS1298_RAW_BITS_DAISY*8U,
-        .tx_buffer = dummy,
-        .rx_buffer = raw,
-    };
+/*
+ * Read whole bytes to avoid the ESP32-C3 8n+1-bit limitation.
+ * Useful bits: 216 + 1 + 216 = 433.
+ * Clocked bits: 55 * 8 = 440.
+ */
+spi_transaction_t t = {
+    .length = ADS1298_RAW_BYTES_DAISY * 8U,
+    .rxlength = ADS1298_RAW_BYTES_DAISY * 8U,
+    .tx_buffer = dummy,
+    .rx_buffer = raw,
+};
 
-    esp_err_t err = ads1298_transmit(ctx, &t);
+esp_err_t err = ads1298_transmit(ctx, &t);
 
-    if (err != ESP_OK) {
-        return err;
-    }
+if (err != ESP_OK) {
+    return err;
+}
 
-    /* First device's 27 bytes are already aligned. */
-    memcpy(out_buf,raw,ADS1298_FRAME_BYTES_SINGLE);
+/* First device: already aligned. */
+memcpy(out_buf,
+       raw,
+       ADS1298_FRAME_BYTES_SINGLE);
 
-    /*
-     * Skip one bit before the second device's data.
-     * Each output byte combines bits from two raw bytes.
-     */
-    for (size_t i = 0; i < ADS1298_FRAME_BYTES_SINGLE; i++) {
-        const size_t j = ADS1298_FRAME_BYTES_SINGLE + i;
+/* Second device: remove the inter-device bit. */
+for (size_t i = 0; i < ADS1298_FRAME_BYTES_SINGLE; i++) {
+    const size_t j = ADS1298_FRAME_BYTES_SINGLE + i;
 
-        out_buf[j] = (uint8_t)(
-            ((uint32_t)raw[j] << 1) |
-            ((uint32_t)raw[j + 1U] >> 7)
-        );
-    }
+    out_buf[j] = (uint8_t)(
+        ((uint32_t)raw[j] << 1) |
+        ((uint32_t)raw[j + 1U] >> 7)
+    );
+}
 
-    return ESP_OK;
+return ESP_OK;
 }
 
 
