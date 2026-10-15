@@ -87,12 +87,14 @@
      ctx->drdy_intr_enabled = cfg->drdy_intr_used;
 
 // configure GPIOs for CS, RESET, START
-    esp_err_t err = ads1298_configure_gpio_output(cfg->cs_io, 1);
+/*levare se funziona
+  err = ads1298_configure_gpio_output(cfg->cs_io, 1);
     if (err != ESP_OK) {
         goto cleanup;
     }
 
-    err = ads1298_configure_gpio_output(cfg->reset_io, 1);
+*/
+    esp_err_t err = ads1298_configure_gpio_output(cfg->reset_io, 1);
     if (err != ESP_OK) {
         goto cleanup;
     }
@@ -205,59 +207,61 @@ gpio_config_t drdy_cfg = {
     return ads1298_transmit(ctx, &t);
 }
 
- esp_err_t ads1298_write_reg(ads1298_handle_t handle, uint8_t reg_addr, uint8_t value)
- {
-    //controllo che l'handle e il registro siano validi
-     if (handle == NULL || reg_addr > 0x1F) {
+esp_err_t ads1298_write_reg(ads1298_handle_t handle,
+                            uint8_t reg_addr,
+                            uint8_t value)
+{
+    if (handle == NULL || reg_addr > 0x1F) {
         return ESP_ERR_INVALID_ARG;
     }
 
     ads1298_context_t *ctx = (ads1298_context_t *)handle;
 
-     // WREG command format: 010r rrrr with r rrrr the starting register address 
-	 uint8_t tx[3] = {
-        ADS1298_CMD_WREG | (reg_addr & 0x1F),
-        0x00,
-        value,
-    };
-
     spi_transaction_t t = {
-        .length = sizeof(tx) * 8,
-        .tx_buffer = tx,
+        .length = 24,
+        .flags = SPI_TRANS_USE_TXDATA,
+        .tx_data = {
+            ADS1298_CMD_WREG | (reg_addr & 0x1F),
+            0x00,
+            value,
+        },
     };
 
     return ads1298_transmit(ctx, &t);
- }
+}
 
- esp_err_t ads1298_read_reg(ads1298_handle_t handle, uint8_t reg_addr, uint8_t *out_value)
- {
-      if (handle == NULL || out_value == NULL || reg_addr > 0x1F) {
+ esp_err_t ads1298_read_reg(ads1298_handle_t handle,
+                           uint8_t reg_addr,
+                           uint8_t *out_value)
+{
+    if (handle == NULL || out_value == NULL || reg_addr > 0x1F) {
         return ESP_ERR_INVALID_ARG;
     }
 
     ads1298_context_t *ctx = (ads1298_context_t *)handle;
 
-
-     // RREG command format: 001r rrrr with r rrrr the starting register address 
-      /* RREG requires the command/count phase followed by clocking data. */
-    uint8_t tx[3] = {
-        ADS1298_CMD_RREG | (reg_addr & 0x1F),
-        0x00,
-        0x00,
-    };
-
-    uint8_t rx[3] = {0};
-
+    /*
+     * RREG command:
+     * Byte 1: 0x20 | register address
+     * Byte 2: number of registers to read - 1
+     * Byte 3: ADS1298 clocks out the register value
+     */
     spi_transaction_t t = {
-        .length = sizeof(tx) * 8,
-        .tx_buffer = tx,
-        .rx_buffer = rx,
+        .length = 24,
+        .flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_USE_RXDATA,
+        .tx_data = {
+            ADS1298_CMD_RREG | (reg_addr & 0x1F),
+            0x00,
+            0x00,
+        },
     };
 
-     esp_err_t err = ads1298_transmit(ctx, &t);
+    esp_err_t err = ads1298_transmit(ctx, &t);
+
     if (err == ESP_OK) {
-        *out_value = rx[2];
+        *out_value = t.rx_data[2];
     }
+
     return err;
 }
 
@@ -273,12 +277,8 @@ gpio_config_t drdy_cfg = {
 
 
      if (ctx->drdy_intr_enabled) {
-        if (xSemaphoreTake(ctx->drdy_sem, 0) == pdTRUE) {
-            /* Clear a previously queued event. */
-        }
-
-        return (xSemaphoreTake(ctx->drdy_sem,
-                               pdMS_TO_TICKS(timeout_ms)) == pdTRUE)
+       
+           return (xSemaphoreTake(ctx->drdy_sem,pdMS_TO_TICKS(timeout_ms)) == pdTRUE)
                    ? ESP_OK
                    : ESP_ERR_TIMEOUT;
     }
@@ -331,19 +331,22 @@ esp_err_t ads1298_read_data(ads1298_handle_t handle,
      * Two-device daisy chain:
      * 216 data bits + 1 inter-device bit + 216 data bits.
      */
-    uint8_t raw[ADS1298_RAW_BYTES_DAISY] = {0};
-uint8_t dummy[ADS1298_RAW_BYTES_DAISY] = {0};
+    static uint8_t ads_raw[64] __attribute__((aligned(4)));
+    static uint8_t ads_dummy[64] __attribute__((aligned(4)));
 
 /*
  * Read whole bytes to avoid the ESP32-C3 8n+1-bit limitation.
  * Useful bits: 216 + 1 + 216 = 433.
  * Clocked bits: 55 * 8 = 440.
  */
+memset(ads_raw, 0, sizeof(ads_raw));
+memset(ads_dummy, 0, sizeof(ads_dummy));
+
 spi_transaction_t t = {
     .length = ADS1298_RAW_BYTES_DAISY * 8U,
     .rxlength = ADS1298_RAW_BYTES_DAISY * 8U,
-    .tx_buffer = dummy,
-    .rx_buffer = raw,
+    .tx_buffer = ads_dummy,
+    .rx_buffer = ads_raw,
 };
 
 esp_err_t err = ads1298_transmit(ctx, &t);
@@ -352,18 +355,16 @@ if (err != ESP_OK) {
     return err;
 }
 
-/* First device: already aligned. */
 memcpy(out_buf,
-       raw,
+       ads_raw,
        ADS1298_FRAME_BYTES_SINGLE);
 
-/* Second device: remove the inter-device bit. */
 for (size_t i = 0; i < ADS1298_FRAME_BYTES_SINGLE; i++) {
     const size_t j = ADS1298_FRAME_BYTES_SINGLE + i;
 
     out_buf[j] = (uint8_t)(
-        ((uint32_t)raw[j] << 1) |
-        ((uint32_t)raw[j + 1U] >> 7)
+        ((uint32_t)ads_raw[j] << 1) |
+        ((uint32_t)ads_raw[j + 1U] >> 7)
     );
 }
 

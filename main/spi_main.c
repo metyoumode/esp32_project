@@ -158,9 +158,16 @@ void app_main(void) {
 
     //stop continuous data mode before register configuraton
 	ESP_ERROR_CHECK(ads1298_send_command(ads_handle, ADS1298_CMD_SDATAC));
+	
 	vTaskDelay(pdMS_TO_TICKS(1));
 
-    // Scrive sul registro CONFIG3: Riferimento interno, si DRL
+	ESP_ERROR_CHECK(ads1298_configure_daisy_chain(ads_handle, 0x96));
+    vTaskDelay(pdMS_TO_TICKS(1));
+   //setto tutti i registri in input-short mode for test
+	config_inputs_for_all(ads_handle, 0x61);
+    vTaskDelay(pdMS_TO_TICKS(1));
+	/*
+	  // Scrive sul registro CONFIG3: Riferimento interno, si DRL
 	ESP_ERROR_CHECK(ads1298_write_reg(ads_handle, ADS1298_REG_CONFIG3, 0xCC));
 	vTaskDelay(pdMS_TO_TICKS(1));
 
@@ -172,11 +179,14 @@ void app_main(void) {
 	ESP_ERROR_CHECK(ads1298_write_reg(ads_handle, ADS1298_REG_RLD_SENSP, 0x00));
 	vTaskDelay(pdMS_TO_TICKS(10));
      
-	/* Example: enable all channels, gain 6, normal electrode input. */
+	// Example: enable all channels, gain 6, normal electrode input. 
 	//qui il codice del stm32 ha uno switch che ti permette ti cambiare il gain
 	//li viene fatto con i gain: 2,4,6,8,12 ma di default c'è gain=8
 	
     config_inputs_for_all(ads_handle, 0x50); //0x50 setta gain=8
+
+	*/
+ 
 
 	/* Start continuous data output and conversions. */
   	ESP_ERROR_CHECK(ads1298_send_command(ads_handle, ADS1298_CMD_START));
@@ -215,12 +225,22 @@ void app_main(void) {
 		parse_ads1298_device_frame(&frame[0], ads1_channels,ads1_status); // ads1
 
 		parse_ads1298_device_frame(&frame[ADS1298_FRAME_BYTES_SINGLE],ads2_channels, ads2_status); // ads2
+		ESP_LOGI(TAG,"ADS1 status: %02X %02X %02X",
+         ads1_status[0],
+         ads1_status[1],
+         ads1_status[2]);
+
+		ESP_LOGI(TAG,"ADS2 status: %02X %02X %02X",
+         ads2_status[0],
+         ads2_status[1],
+         ads2_status[2]);
 
 		ads1298_print_dual_channels(ads1_channels, ads2_channels);
 
 		/* Process or queue the 16 decoded channels here. */
 		// TODO: parse frame (status + 24-bit channels)
 
-		vTaskDelay(1); // optional small delay
+		vTaskDelay(pdMS_TO_TICKS(2)); //increased delay
+		//vTaskDelay(1); // optional small delay
 	}
 }
