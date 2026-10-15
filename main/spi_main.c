@@ -157,16 +157,17 @@ void app_main(void) {
 	vTaskDelay(pdMS_TO_TICKS(1));
 
     //stop continuous data mode before register configuraton
-	ESP_ERROR_CHECK(ads1298_send_command(ads_handle, ADS1298_CMD_SDATAC));
-	
+	ESP_ERROR_CHECK(ads1298_send_command(ads_handle, ADS1298_CMD_SDATAC));	
 	vTaskDelay(pdMS_TO_TICKS(1));
 
+    //daisy_chain configuration setting
 	ESP_ERROR_CHECK(ads1298_configure_daisy_chain(ads_handle, 0x96));
     vTaskDelay(pdMS_TO_TICKS(1));
-   //setto tutti i registri in input-short mode for test
-	config_inputs_for_all(ads_handle, 0x61);
+
+   //setto tutti i registri in internal test signals, dovrei vedere un pattern nei dati
+	ESP_ERROR_CHECK(ads1298_write_reg(ads_handle,ADS1298_REG_CONFIG2,0x10));
     vTaskDelay(pdMS_TO_TICKS(1));
-	/*
+
 	  // Scrive sul registro CONFIG3: Riferimento interno, si DRL
 	ESP_ERROR_CHECK(ads1298_write_reg(ads_handle, ADS1298_REG_CONFIG3, 0xCC));
 	vTaskDelay(pdMS_TO_TICKS(1));
@@ -183,17 +184,17 @@ void app_main(void) {
 	//qui il codice del stm32 ha uno switch che ti permette ti cambiare il gain
 	//li viene fatto con i gain: 2,4,6,8,12 ma di default c'è gain=8
 	
-    config_inputs_for_all(ads_handle, 0x50); //0x50 setta gain=8
+    config_inputs_for_all(ads_handle, 0x65);
+	vTaskDelay(pdMS_TO_TICKS(1));
+    //config_inputs_for_all(ads_handle, 0x50); //0x50 setta gain=8
 
-	*/
- 
 
-	/* Start continuous data output and conversions. */
+	// Start continuous data output and conversions.
   	ESP_ERROR_CHECK(ads1298_send_command(ads_handle, ADS1298_CMD_START));
     vTaskDelay(pdMS_TO_TICKS(1));
 
 	ESP_ERROR_CHECK(ads1298_send_command(ads_handle, ADS1298_CMD_RDATAC));
-
+    vTaskDelay(pdMS_TO_TICKS(1));
 	ESP_LOGI(TAG, "ADS1298 daisy chain started");
 
 	uint8_t frame[ADS1298_FRAME_BYTES_DAISY];
@@ -202,45 +203,85 @@ void app_main(void) {
 	uint8_t ads1_status[ADS1298_STATUS_BYTES];
 	uint8_t ads2_status[ADS1298_STATUS_BYTES];
 
-	while (1) {
-		// Wait for new data
-		ret = ads1298_wait_drdy(ads_handle,
-                        ADS1298_DRDY_TIMEOUT_MS);
+	int din_test_state = 0;   /* 0 = wait for frames, 1 = wait after SDATAC */
+int good_frames = 0;
+int timeout_count = 0;
 
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG,"DRDY timeout: %s; GPIO%d level=%d",esp_err_to_name(ret),(int)PIN_NUM_DRDY,gpio_get_level(PIN_NUM_DRDY));
+while (1) {
+    ret = ads1298_wait_drdy(ads_handle,
+                            ADS1298_DRDY_TIMEOUT_MS);
 
-    continue;
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "DRDY timeout: %s; GPIO%d level=%d",
+                 esp_err_to_name(ret),
+                 (int)PIN_NUM_DRDY,
+                 gpio_get_level(PIN_NUM_DRDY));
+
+        if (din_test_state == 1) {
+            timeout_count++;
+				 ESP_LOGI(TAG,"timeoutcount %d", timeout_count);
+
+            if (timeout_count >= 50) {
+                ESP_LOGI(TAG,"DIN TEST: data stopped after SDATAC, sending RDATAC");
+
+                ESP_ERROR_CHECK(ads1298_send_command(
+                    ads_handle,
+                    ADS1298_CMD_RDATAC));
+
+                din_test_state = 2;
+                timeout_count = 0;
+            }
+        }
+
+        continue;
+    }
+
+    ret = ads1298_read_data(ads_handle, frame, sizeof(frame));
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG,"Error reading dual ADS1298 frame: %s",esp_err_to_name(ret));
+        vTaskDelay(10);
+        continue;
+    }
+
+    parse_ads1298_device_frame(&frame[0],
+                               ads1_channels,
+                               ads1_status);
+
+    parse_ads1298_device_frame(&frame[ADS1298_FRAME_BYTES_SINGLE],
+                               ads2_channels,
+                               ads2_status);
+
+    ESP_LOGI(TAG,"ADS1 status: %02X %02X %02X",ads1_status[0],ads1_status[1],ads1_status[2]);
+
+    ESP_LOGI(TAG,"ADS2 status: %02X %02X %02X",ads2_status[0],ads2_status[1],ads2_status[2]);
+
+    ads1298_print_dual_channels(ads1_channels, ads2_channels);
+
+    if (din_test_state == 0) {
+        good_frames++;
+       ESP_LOGI(TAG,"good frame arrived %d",good_frames);
+        if (good_frames == 10) {
+            ESP_LOGI(TAG,"DIN TEST: 10 frames received; sending SDATAC");
+
+            ESP_ERROR_CHECK(ads1298_send_command(ads_handle,ADS1298_CMD_SDATAC));
+
+            din_test_state = 1;
+            timeout_count = 0;
+        }
+    }
+
+    if (din_test_state == 2) {
+        good_frames++;
+
+        if (good_frames >= 20) {
+            ESP_LOGI(TAG,
+                     "DIN TEST complete: RDATAC data resumed");
+            din_test_state = 3;
+        }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(5));
 }
-
-		// Read one sample set
-		ret = ads1298_read_data(ads_handle, frame, sizeof(frame));
-		if (ret != ESP_OK) {
-			ESP_LOGE(TAG, "Error reading dual ADS1298 frame: %s",esp_err_to_name(ret));
-            vTaskDelay(10);
-            continue;
-		}
-
-		/* Assumption: first 27-byte block is ADS1, second is ADS2. */
-		parse_ads1298_device_frame(&frame[0], ads1_channels,ads1_status); // ads1
-
-		parse_ads1298_device_frame(&frame[ADS1298_FRAME_BYTES_SINGLE],ads2_channels, ads2_status); // ads2
-		ESP_LOGI(TAG,"ADS1 status: %02X %02X %02X",
-         ads1_status[0],
-         ads1_status[1],
-         ads1_status[2]);
-
-		ESP_LOGI(TAG,"ADS2 status: %02X %02X %02X",
-         ads2_status[0],
-         ads2_status[1],
-         ads2_status[2]);
-
-		ads1298_print_dual_channels(ads1_channels, ads2_channels);
-
-		/* Process or queue the 16 decoded channels here. */
-		// TODO: parse frame (status + 24-bit channels)
-
-		vTaskDelay(pdMS_TO_TICKS(2)); //increased delay
-		//vTaskDelay(1); // optional small delay
-	}
 }

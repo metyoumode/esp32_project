@@ -372,15 +372,16 @@ return ESP_OK;
 }
 
 
- esp_err_t ads1298_configure_daisy_chain(ads1298_handle_t handle,
+esp_err_t ads1298_configure_daisy_chain(ads1298_handle_t handle,
                                         uint8_t config1_value)
 {
     if (handle == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    /* Clear DAISY_EN. Keep the data-rate bits selected by the caller. */
-    config1_value &= (uint8_t)~0x01U;
+   //sets bit 6 in daisy_EN
+    config1_value |= 0x40U;
+
     return ads1298_write_reg(handle,ADS1298_REG_CONFIG1,config1_value);
 }
 
